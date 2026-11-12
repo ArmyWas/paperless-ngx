@@ -392,13 +392,7 @@ def test_committed_links_retry_after_refresh_failure_without_deleting_mail(
             link_mail_documents(results, rule, field_id=field_id)
 
     first, second = DocumentFactory.create_batch(2, owner=None)
-    callback_args = {
-        "rule_id": rule.pk,
-        "message_uid": "retry-42",
-        "message_subject": "Retry source",
-        "message_date": timezone.now(),
-        "document_link_field_id": rule.assign_document_link_field_id,
-    }
+    message_date = timezone.now()
     with (
         mock.patch(
             "paperless_mail.mail.link_mail_documents",
@@ -411,7 +405,14 @@ def test_committed_links_retry_after_refresh_failure_without_deleting_mail(
     ):
         refresh.side_effect = [OSError("Index unavailable"), None]
         with pytest.raises(OSError):
-            apply_mail_action([success(first), success(second)], **callback_args)
+            apply_mail_action(
+                [success(first), success(second)],
+                rule_id=rule.pk,
+                message_uid="retry-42",
+                message_subject="Retry source",
+                message_date=message_date,
+                document_link_field_id=rule.assign_document_link_field_id,
+            )
         mailbox.assert_not_called()
         failed = ProcessedMail.objects.get(rule=rule, uid="retry-42")
         assert failed.status == "FAILED"
@@ -419,7 +420,14 @@ def test_committed_links_retry_after_refresh_failure_without_deleting_mail(
 
         # As documented, the user clears the failed processing log before refetch.
         failed.delete()
-        apply_mail_action([duplicate(first), duplicate(second)], **callback_args)
+        apply_mail_action(
+            [duplicate(first), duplicate(second)],
+            rule_id=rule.pk,
+            message_uid="retry-42",
+            message_subject="Retry source",
+            message_date=message_date,
+            document_link_field_id=rule.assign_document_link_field_id,
+        )
         assert refresh.call_count == 2
         mailbox.assert_called_once()
         action.return_value.post_consume.assert_called_once()
