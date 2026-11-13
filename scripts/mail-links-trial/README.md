@@ -129,6 +129,17 @@ successful mail records. It only authenticates and reads the existing trial data
 
 ### Status and cleanup
 
+For a **recovered** trial, use the generated configuration:
+
+```sh
+docker compose -p paperless-mail-links-trial -f compose.access-fixed.yaml ps --all
+docker compose -p paperless-mail-links-trial -f compose.access-fixed.yaml stop
+```
+
+The examples below use `compose.yaml` for a fresh checkout. After recovery, replace
+it with `compose.access-fixed.yaml` in **every** command, including cleanup, so the
+browser proxy is included.
+
 To inspect this trial's services and recent logs:
 
 ```sh

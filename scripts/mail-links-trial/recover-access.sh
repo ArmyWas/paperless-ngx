@@ -36,21 +36,21 @@ for tool in git docker mktemp; do
 	command -v "$tool" >/dev/null 2>&1 || fail "Required command is missing: $tool"
 done
 [[ $(git rev-parse --show-prefix) == scripts/mail-links-trial/ ]] ||
-	fail 'Run this script from the original checkout scripts/mail-links-trial directory.'
+fail 'Run this script from the original checkout scripts/mail-links-trial directory.'
 [[ -f compose.yaml && -f smoke.py ]] ||
-	fail 'The original compose.yaml and smoke.py must still be in this directory.'
+fail 'The original compose.yaml and smoke.py must still be in this directory.'
 [[ "$project" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || fail 'Invalid trial project name.'
 [[ "$port" =~ ^[0-9]{1,5}$ ]] || fail 'Invalid local trial port.'
 ((10#$port >= 1 && 10#$port <= 65535)) || fail 'The local trial port must be between 1 and 65535.'
 docker compose version >/dev/null
 git rev-parse --verify "refs/tags/$recovery_tag^{commit}" >/dev/null ||
-	fail "The recovery tag is missing. Fetch tag $recovery_tag before running this script."
+fail "The recovery tag is missing. Fetch tag $recovery_tag before running this script."
 
 # These overrides are for isolated validation projects, not production instances.
 export MAIL_LINKS_TRIAL_PORT="$port"
 container_ids=$(docker ps --all --quiet \
-	--filter "label=com.docker.compose.project=$project" \
-	--filter 'label=com.docker.compose.service=webserver' \
+		--filter "label=com.docker.compose.project=$project" \
+		--filter 'label=com.docker.compose.service=webserver' \
 	--filter 'label=com.docker.compose.oneoff=False')
 [[ -n "$container_ids" ]] || fail "No existing trial webserver was found for project $project."
 mapfile -t containers <<<"$container_ids"
@@ -61,10 +61,10 @@ container=${containers[0]}
 for volume in data media consume export; do
 	destination="/usr/src/paperless/$volume"
 	mount=$(docker inspect --format \
-		"{{range .Mounts}}{{if eq .Destination \"$destination\"}}{{.Type}}:{{.Name}}{{end}}{{end}}" \
+			"{{range .Mounts}}{{if eq .Destination \"$destination\"}}{{.Type}}:{{.Name}}{{end}}{{end}}" \
 		"$container")
 	[[ "$mount" == "volume:${project}_$volume" ]] ||
-		fail "Unexpected storage at $destination ($mount). No configuration or container was changed."
+	fail "Unexpected storage at $destination ($mount). No configuration or container was changed."
 	docker volume inspect "${project}_$volume" >/dev/null
 done
 image_id=$(docker inspect --format '{{.Image}}' "$container")
@@ -74,7 +74,7 @@ export MAIL_LINKS_TRIAL_IMAGE="$image_id"
 
 for target in "$compose_file" nginx.conf; do
 	[[ ! -L "$target" && (! -e "$target" || -f "$target") ]] ||
-		fail "Refusing to replace a symlink or non-file: $target"
+	fail "Refusing to replace a symlink or non-file: $target"
 done
 
 compose_temp=$(mktemp .mail-links-compose.XXXXXX)
@@ -126,8 +126,8 @@ printf 'Use -p %s -f %s for future trial start/stop commands.\n' "$project" "$co
 
 if command -v curl >/dev/null 2>&1; then
 	if status=$(curl --noproxy '*' --fail --silent --show-error \
-		--retry 3 --retry-connrefused --retry-delay 1 --max-time 10 \
-		--output /dev/null --write-out '%{http_code}' "$url/accounts/login/") && [[ "$status" == 200 ]]; then
+			--retry 3 --retry-connrefused --retry-delay 1 --max-time 10 \
+			--output /dev/null --write-out '%{http_code}' "$url/accounts/login/") && [[ "$status" == 200 ]]; then
 		printf '%s\n' 'Verified: the login page is reachable from this computer (HTTP 200).'
 	else
 		printf 'The services started, but the host login page is not yet verified. Run:\n  curl --noproxy '\''*'\'' --max-time 10 -v %s/accounts/login/\n' "$url" >&2
