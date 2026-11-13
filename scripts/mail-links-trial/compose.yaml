@@ -1,0 +1,63 @@
+# Experimental, disposable local trial. AI-authored with ArmyWas's authorization.
+# Never attach production volumes or expose this fixed-password demo publicly.
+name: paperless-mail-links-trial
+services:
+  broker:
+    image: docker.io/valkey/valkey:9-alpine
+  greenmail:
+    image: docker.io/greenmail/standalone:2.1.15
+    environment:
+      GREENMAIL_OPTS: >-
+        -Dgreenmail.setup.test.smtp -Dgreenmail.setup.test.imap -Dgreenmail.hostname=0.0.0.0 -Dgreenmail.users=trial:trial@localhost -Dgreenmail.users.login=email
+  gotenberg:
+    image: docker.io/gotenberg/gotenberg:8.38
+    command:
+      - gotenberg
+      - --chromium-disable-javascript=true
+      - --chromium-allow-list=^file:///tmp/.*
+  tika:
+    image: docker.io/apache/tika:3.3.1.0
+  webserver:
+    image: paperless-mail-links-trial:local
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      args:
+        PNGX_TAG_VERSION: feature-mail-links-trial
+    depends_on:
+      - broker
+      - greenmail
+      - gotenberg
+      - tika
+    ports:
+      - 127.0.0.1:8088:8000
+    volumes:
+      - data:/usr/src/paperless/data
+      - media:/usr/src/paperless/media
+      - consume:/usr/src/paperless/consume
+      - export:/usr/src/paperless/export
+      - ./smoke.py:/trial/smoke.py:ro
+    environment:
+      PAPERLESS_REDIS: redis://broker:6379
+      PAPERLESS_DBENGINE: sqlite
+      PAPERLESS_URL: http://127.0.0.1:8088
+      PAPERLESS_SECRET_KEY: disposable-mail-links-trial-only-do-not-use-for-real-data
+      PAPERLESS_ADMIN_USER: trial
+      PAPERLESS_ADMIN_PASSWORD: mail-links-local-trial
+      PAPERLESS_TIKA_ENABLED: "1"
+      PAPERLESS_TIKA_GOTENBERG_ENDPOINT: http://gotenberg:3000
+      PAPERLESS_TIKA_ENDPOINT: http://tika:9998
+      PAPERLESS_EMAIL_TASK_CRON: disable
+      PAPERLESS_OCR_LANGUAGE: eng
+      PAPERLESS_OCR_MODE: skip
+      PAPERLESS_CONSUMER_DELETE_DUPLICATES: "true"
+      PAPERLESS_TASK_WORKERS: "1"
+      PAPERLESS_THREADS_PER_WORKER: "1"
+volumes:
+  data:
+  media:
+  consume:
+  export:
+networks:
+  default:
+    internal: true
