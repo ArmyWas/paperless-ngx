@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Exercise the disposable Compose trial using only synthetic mail and public APIs.
 
-AI-authored experimental-fork tooling, with ArmyWas's authorization. Run inside
-the trial webserver container; this script deliberately has no production-server
-or mailbox options. It leaves its six synthetic documents available in the UI.
+AI-authored experimental-fork tooling, with ArmyWas's authorization. Initialize
+inside the trial webserver container, or verify existing synthetic data through
+a loopback host URL. This script has no real mailbox or production credentials.
 """
 
 from __future__ import annotations
 
+import argparse
 import email.policy
 import imaplib
 import json
@@ -51,7 +52,21 @@ def progress(message: str) -> None:
 
 
 class Api:
-    def __init__(self) -> None:
+    def __init__(self, base_url: str = API_BASE) -> None:
+        origin = urlsplit(base_url)
+        require(
+            origin.scheme == "http"
+            and origin.hostname in {"127.0.0.1", "localhost", "::1"}
+            and origin.username is None
+            and origin.password is None
+            and origin.path in {"", "/"}
+            and not origin.query
+            and not origin.fragment
+            and (origin.port is None or origin.port > 0),
+            "The trial base URL must be an HTTP loopback origin without a path, "
+            "credentials, query or fragment.",
+        )
+        self.base_url = base_url.rstrip("/")
         self.token = ""
 
     def request(
@@ -62,9 +77,10 @@ class Api:
         data: dict[str, Any] | None = None,
         binary: bool = False,
     ) -> Any:
-        url = urljoin(API_BASE, path)
+        url = urljoin(self.base_url, path)
         require(
-            urlsplit(url).netloc == urlsplit(API_BASE).netloc,
+            (urlsplit(url).scheme, urlsplit(url).netloc)
+            == (urlsplit(self.base_url).scheme, urlsplit(self.base_url).netloc),
             "Refusing an API request outside the disposable local server.",
         )
         headers = {"Accept": "application/json; version=10"}
@@ -262,9 +278,97 @@ def verify_links(
         )
 
 
+def verify_completed_trial(api: Api, field_id: int) -> None:
+    documents = documents_by_filename(api, 6)
+    eml_name = f"{PREFIX} - full email DE.eml"
+    expected = {
+        "A.pdf": {"B.pdf"},
+        "B.pdf": {"A.pdf", "C.pdf"},
+        "C.pdf": {"B.pdf"},
+        eml_name: {"D.pdf", "E.pdf"},
+        "D.pdf": {eml_name, "E.pdf"},
+        "E.pdf": {eml_name, "D.pdf"},
+    }
+    verify_links(documents, field_id, expected)
+    payloads = {f"{label}.pdf": synthetic_pdf(label) for label in "ABCDE"}
+    for name, payload in payloads.items():
+        original = api.request(
+            f"/api/documents/{documents[name]['id']}/download/?original=true",
+            binary=True,
+        )
+        require(original == payload, f"The stored original bytes changed for {name}.")
+    eml_document = documents[eml_name]
+    require(
+        eml_document["mime_type"] == "message/rfc822",
+        "Full mail is not stored as EML.",
+    )
+    eml_bytes = api.request(
+        f"/api/documents/{eml_document['id']}/download/?original=true",
+        binary=True,
+    )
+    eml = BytesParser(policy=email.policy.default).parsebytes(eml_bytes)
+    body = eml.get_body(preferencelist=("plain",))
+    require(
+        body is not None and "SYNTHETIC BODY CONTEXT" in body.get_content(),
+        "The downloadable EML did not retain its synthetic body context.",
+    )
+    embedded = {
+        part.get_filename(): part.get_payload(decode=True)
+        for part in eml.iter_attachments()
+    }
+    require(
+        embedded == {name: payloads[name] for name in ["D.pdf", "E.pdf"]},
+        "The downloadable EML did not retain both exact original attachments.",
+    )
+    records = api.items("/api/processed_mail/?page_size=100")
+    require(
+        len(records) == 4 and all(record["status"] == "SUCCESS" for record in records),
+        "Expected four successful native email batches.",
+    )
+    progress(
+        "PASS: four successful mail records; six separate, intact source documents.",
+    )
+    progress(
+        "PASS: A-B and B-C only; six documents with no extra links.",
+    )
+    progress(
+        "PASS: full EML, D and E link symmetrically; original body/attachments preserved.",
+    )
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--verify-only",
+        action="store_true",
+        help="Verify existing synthetic trial data; do not import or change documents.",
+    )
+    parser.add_argument(
+        "--base-url",
+        default=API_BASE,
+        help="HTTP loopback origin for --verify-only (default: %(default)s).",
+    )
+    args = parser.parse_args()
+    require(
+        args.verify_only or args.base_url == API_BASE,
+        "A custom base URL is only supported with --verify-only. "
+        "Initialize the trial inside its webserver container.",
+    )
+    api = Api(args.base_url)
+    if args.verify_only:
+        progress(f"Verifying existing synthetic trial data through {api.base_url}.")
+        api.login()
+        fields = [
+            field
+            for field in api.items("/api/custom_fields/")
+            if field["name"] == f"{PREFIX} - Same email"
+            and field["data_type"] == "documentlink"
+        ]
+        require(len(fields) == 1, "Expected exactly one synthetic trial link field.")
+        verify_completed_trial(api, fields[0]["id"])
+        progress("Verification finished without importing or changing trial documents.")
+        return
     progress("Starting the isolated native mail-links trial (synthetic data only).")
-    api = Api()
     api.login()
     for resource in ["documents", "mail_accounts", "mail_rules", "processed_mail"]:
         require(
@@ -358,57 +462,7 @@ def main() -> None:
         full_subject,
         {name: payloads[name] for name in ["D.pdf", "E.pdf"]},
     )
-    documents = documents_by_filename(api, 6)
-    eml_name = f"{full_subject}.eml"
-    expected.update(
-        {
-            eml_name: {"D.pdf", "E.pdf"},
-            "D.pdf": {eml_name, "E.pdf"},
-            "E.pdf": {eml_name, "D.pdf"},
-        },
-    )
-    verify_links(documents, field_id, expected)
-    for name, payload in payloads.items():
-        original = api.request(
-            f"/api/documents/{documents[name]['id']}/download/?original=true",
-            binary=True,
-        )
-        require(original == payload, f"The stored original bytes changed for {name}.")
-    eml_document = documents[eml_name]
-    require(
-        eml_document["mime_type"] == "message/rfc822",
-        "Full mail is not stored as EML.",
-    )
-    eml_bytes = api.request(
-        f"/api/documents/{eml_document['id']}/download/?original=true",
-        binary=True,
-    )
-    eml = BytesParser(policy=email.policy.default).parsebytes(eml_bytes)
-    body = eml.get_body(preferencelist=("plain",))
-    require(
-        body is not None and "SYNTHETIC BODY CONTEXT" in body.get_content(),
-        "The downloadable EML did not retain its synthetic body context.",
-    )
-    embedded = {
-        part.get_filename(): part.get_payload(decode=True)
-        for part in eml.iter_attachments()
-    }
-    require(
-        embedded == {name: payloads[name] for name in ["D.pdf", "E.pdf"]},
-        "The downloadable EML did not retain both exact original attachments.",
-    )
-    records = api.items("/api/processed_mail/?page_size=100")
-    require(
-        len(records) == 4 and all(record["status"] == "SUCCESS" for record in records),
-        "Expected four successful native email batches.",
-    )
-    progress("PASS: four native email batches; six separate, intact source documents.")
-    progress(
-        "PASS: A-B and B-C only; duplicate replay added no document or extra link.",
-    )
-    progress(
-        "PASS: full EML, D and E link symmetrically; original body/attachments preserved.",
-    )
+    verify_completed_trial(api, field_id)
     progress("The synthetic documents remain at http://127.0.0.1:8088 for inspection.")
 
 

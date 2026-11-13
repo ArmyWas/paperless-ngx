@@ -44,6 +44,12 @@ jobs:
       - name: Import synthetic mail and verify document links
         timeout-minutes: 15
         run: docker compose exec -T webserver python3 /trial/smoke.py
+      - name: Verify the browser entry from the host
+        run: |
+          test "$(docker compose port browser 8080)" = "127.0.0.1:8088"
+          curl --fail --location --retry 5 --retry-connrefused --retry-delay 2 http://127.0.0.1:8088/ -o /tmp/mail-links-login.html
+          grep -qi paperless /tmp/mail-links-login.html
+          python3 scripts/mail-links-trial/smoke.py --verify-only --base-url http://127.0.0.1:8088
       - name: Show service status and logs
         if: always()
         run: |

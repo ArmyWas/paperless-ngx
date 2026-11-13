@@ -22,8 +22,10 @@ connect to your mailbox or mount an existing Paperless installation.
 The supported first trial is a fresh instance. Do not replace a production image
 or copy its volumes into this demo. All four storage volumes belong to the
 explicit `paperless-mail-links-trial` Compose project. The only published port
-is `127.0.0.1:8088`; the runtime network is internal. The fixed credentials below
-are for this local, synthetic-data demo only.
+is `127.0.0.1:8088`, published by a small browser proxy. The application, mailbox,
+broker and parsing services remain on an internal network. Only the proxy also
+connects to a normal bridge network and has outbound connectivity. The fixed
+credentials below are for this local, synthetic-data demo only.
 
 ## Start the trial
 
@@ -31,7 +33,7 @@ Run these commands in a new directory. They work in a normal terminal, including
 PowerShell when Docker Desktop is running Linux containers.
 
 ```sh
-git clone --branch mail-links-trial-20261113 --depth 1 https://github.com/ArmyWas/paperless-ngx.git paperless-mail-links-demo
+git clone --branch mail-links-trial-20261113-access1 --depth 1 https://github.com/ArmyWas/paperless-ngx.git paperless-mail-links-demo
 cd paperless-mail-links-demo/scripts/mail-links-trial
 docker compose -p paperless-mail-links-trial -f compose.yaml up -d --build --wait --wait-timeout 300
 docker compose -p paperless-mail-links-trial -f compose.yaml exec -T webserver python3 /trial/smoke.py
@@ -75,6 +77,58 @@ mail is a separate next step after this disposable trial.
 
 ## Troubleshooting and cleanup
 
+### Existing trial starts, but the browser cannot connect
+
+The original `mail-links-trial-20261113` tag requested a host port on an
+internal-only network. The application could pass its internal health and import
+checks while no browser port was published. The `access1` revision adds a local
+proxy and checks the host entry separately.
+
+For an existing trial in **WSL/Linux**, run the following from its original
+`scripts/mail-links-trial` directory. Stop if any command fails:
+
+```sh
+git fetch origin tag mail-links-trial-20261113-access1
+git show mail-links-trial-20261113-access1:scripts/mail-links-trial/recover-access.sh > recover-access.sh
+bash recover-access.sh
+```
+
+The recovery script checks the running trial's four named volumes before making
+changes, keeps the existing application image and documents, and writes a separate
+`compose.access-fixed.yaml`. Your original `compose.yaml` is left intact. If it
+finds nonstandard mounts, it stops instead of attaching an empty database. It
+downloads the small proxy image and may recreate the application container while
+retaining all four volumes. It does not rebuild the application or re-import mail.
+
+Use `-f compose.access-fixed.yaml` for subsequent start, stop and status commands
+after recovery. Do **not** run the fresh-instance import command again or remove
+volumes to fix browser access.
+
+Open <http://127.0.0.1:8088> on the same computer. If it still does not open, run
+these in the same WSL terminal and share the output:
+
+```sh
+docker compose -p paperless-mail-links-trial -f compose.access-fixed.yaml ps --all
+curl --max-time 10 -I http://127.0.0.1:8088/accounts/login/
+```
+
+If WSL can reach the page but a Windows browser cannot, that separates a remaining
+WSL forwarding problem from the container's port publication. Do not change the
+binding to a public address or disable the firewall.
+
+To check the already imported synthetic samples through the **host** entry, without
+initializing or importing anything, optionally use Python 3.11 or newer:
+
+```sh
+git show mail-links-trial-20261113-access1:scripts/mail-links-trial/smoke.py > verify-access.py
+python3 verify-access.py --verify-only --base-url http://127.0.0.1:8088
+```
+
+This checks the six documents, exact links, original PDF/EML contents and four
+successful mail records. It only authenticates and reads the existing trial data.
+
+### Status and cleanup
+
 To inspect this trial's services and recent logs:
 
 ```sh
@@ -98,4 +152,6 @@ The image and cloned source remain. Repeating `up` after removing the volumes
 starts a fresh trial. Do not change the project name in the cleanup command.
 
 The fork's [Mail links isolated trial workflow](../../.github/workflows/mail-links-trial.yml)
-builds this container and executes the same import check on a Linux runner.
+builds this container, executes the import check, and verifies the published host
+entry and existing samples from a Linux runner. For a second independent local
+test, `MAIL_LINKS_TRIAL_PORT` can select a different loopback port; the default is 8088. Do not change the project name of an existing trial.
